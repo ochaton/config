@@ -47,6 +47,9 @@ local dynamic = {
 	panic_on_wal_error  = true,
 	snap_io_rate_limit  = true,
 	wal_mode            = true,
+	
+--- Replication source. Dynamic ---
+	replication_source  = true,
 
 --- Networking. Dynamic ---
 	listen              = true,
@@ -139,6 +142,7 @@ else
 			setmetatable(cfg,nil)
 			local sttconf = {}
 			local dynconf = {}
+			local entire_boxconf = {}
 			local appconf = {}
 			if not cfg.box then
 				error("No box.* config given")
@@ -158,19 +162,23 @@ else
 				elseif dynamic[k] then dynconf[k] = v
 				else                   appconf[k] = v
 				end
+				
+				if static[k] or dynamic[k] then
+					entire_boxconf[k] = v
+				end
 			end
 
 			if type(box.cfg) == 'function' then
 				-- 1st run
-				box.cfg( sttconf )
+				box.cfg( entire_boxconf )
 			else
 				for k,v in pairs(sttconf) do
 					if box.cfg[k] ~= v then
 						log.error("Can't change non-dynamic parameter '%s' from '%s' to '%s'. Restart required",k, box.cfg[k], v)
 					end
 				end
+				box.cfg( dynconf )
 			end
-			box.cfg( dynconf )
 
 			if cfg.console then
 				-- print("cfg for ",cfg.console.listen, M.console and M.console.listen)
@@ -199,16 +207,16 @@ else
 						else
 							M.console.socket = e
 							-- print("console listening on ",cfg.console.listen, e)
-							return							
+							return
 						end
-					end	
+					end
 				end)
 			else
 				if M.console.listen then
 					-- print("close console socket",M.console.listen)
 					local r,e = pcall(M.console.socket.close,M.console.socket)
 					print(r,e)
-				end				
+				end
 			end
 			-- TODO: app conf
 			M.flat = flatten(cfg)
