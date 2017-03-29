@@ -55,7 +55,7 @@ local dynamic = {
 --- Snapshot daemon. Dynamic ---
 	snapshot_period     = true,
 	snapshot_count      = true,
--- Refactored names. Dynamic --
+--- Refactored names. Dynamic ---
 	checkpoint_count    = true,
 	checkpoint_interval = true,
 --- Binary logging and snapshots. Dynamic ---
