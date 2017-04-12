@@ -40,6 +40,7 @@ local static = {
 }
 
 local dynamic = {
+	read_only           = true,
 --- Snapshot daemon. Dynamic ---
 	snapshot_period     = true,
 	snapshot_count      = true,
