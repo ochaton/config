@@ -27,6 +27,7 @@ local static = {
 	memtx_memory              = true,
 	memtx_max_tuple_size      = true,
 	memtx_min_tuple_size      = true,
+	memtx_dir                 = true,
 	vinyl_bloom_fpr           = true,
 	vinyl_cache               = true,
 	vinyl_memory              = true,
@@ -49,6 +50,7 @@ local static = {
 --- Logging. Not dynamic ---
 	logger               = true,
 	logger_nonblock      = true,
+	log                  = true,
 }
 
 local dynamic = {
