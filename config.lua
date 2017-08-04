@@ -69,6 +69,7 @@ local dynamic = {
 
 --- Replication source. Dynamic ---
 	replication_source  = true,
+	replication         = true,
 
 --- Networking. Dynamic ---
 	listen              = true,
