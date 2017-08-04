@@ -28,6 +28,7 @@ local static = {
 	memtx_max_tuple_size      = true,
 	memtx_min_tuple_size      = true,
 	memtx_dir                 = true,
+	vinyl_dir                 = true,
 	vinyl_bloom_fpr           = true,
 	vinyl_cache               = true,
 	vinyl_memory              = true,
