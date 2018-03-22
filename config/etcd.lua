@@ -43,7 +43,7 @@ function M.new(M,options)
 	self.timeout   = options.timeout or 1
 	self.client    = http_client.new()
 	if options.login then
-		self.authorization = "Basic "..digest.base64_encode(options.login..":"..(pass or ""))
+		self.authorization = "Basic "..digest.base64_encode(options.login..":"..(options.password or ""))
 		self.headers = { authorization = self.authorization }
 	end
 	return self
