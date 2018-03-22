@@ -15,7 +15,8 @@ dependencies = {
 build = {
     type = 'builtin',
     modules = {
-        ['config'] = 'config.lua'
+        ['config'] = 'config.lua';
+        ['config.etcd'] = 'config/etcd.lua';
     }
 }
 
