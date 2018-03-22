@@ -1,1 +1,0 @@
-rockspecs/config-scm-1.rockspec
