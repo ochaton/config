@@ -41,7 +41,7 @@ function M.new(M,options)
 	self.endpoints = options.endpoints or {'http://127.0.0.1:4001','http://127.0.0.1:2379'}
 	-- self.prefix    = options.prefix or ''
 	self.timeout   = options.timeout or 1
-	self.client    = http_client.new()
+	self.client    = http_client -- .new() - it fix for 1.6 also client: -> clent.
 	if options.login then
 		self.authorization = "Basic "..digest.base64_encode(options.login..":"..(options.password or ""))
 		self.headers = { authorization = self.authorization }
@@ -54,7 +54,7 @@ function M:discovery()
 	local new_endpoints = {}
 	for _,e in pairs(self.endpoints) do
 		local uri = e .. "/v2/members"
-		local x = self.client:request("GET",uri,'',{timeout = timeout; headers = self.headers})
+		local x = self.client.request("GET",uri,'',{timeout = timeout; headers = self.headers})
 		if x and x.status == 200 then
 			if x.headers['content-type'] == 'application/json' then
 				local data = json.decode( x.body )
@@ -103,7 +103,7 @@ function M:request(method, path, args )
 	for _,endpoint in pairs(self.endpoints) do
 		local uri = string.format("%s/v2/%s%s", self.current, path, qs )
 		-- print("[debug] "..uri)
-		local x = self.client:request(method,uri,body,{timeout = self.timeout or 1; headers = self.headers})
+		local x = self.client.request(method,uri,body,{timeout = self.timeout or 1; headers = self.headers})
 		local status,reply = pcall(json.decode,x and x.body)
 		if x.status < 500 then
 			if status then
