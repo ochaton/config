@@ -217,6 +217,13 @@ local M
 				error("No box.* config given", 2)
 			end
 
+
+			deep_merge(cfg,{
+				sys = deep_copy(args)
+			})
+			cfg.sys.boxcfg = nil
+			cfg.sys.on_load = nil
+
 			-- if not cfg.box.custom_proc_title and args.instance_name then
 			-- 	cfg.box.custom_proc_title = args.instance_name
 			-- end
