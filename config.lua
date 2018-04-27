@@ -267,6 +267,7 @@ local M
 				else
 					cfg.box.pid_file = nil
 					cfg.box.background = nil
+					cfg.box.memtx_memory = nil
 					--print("Hide bad options")
 					--require'log'.info("Hide bad options")
 					box.cfg( cfg.box )
