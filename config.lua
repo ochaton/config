@@ -6,6 +6,58 @@ local yaml = require 'yaml'
 json.cfg{ encode_invalid_as_nil = true }
 -- yaml.cfg{ encode_invalid_as_nil = true }
 
+local peek = {
+	dynamic_cfg   = true;
+	upgrade_cfg   = true;
+	translate_cfg = true;
+	log           = true;
+}
+
+do
+	local i = 1
+	local peekf = type(box.cfg) == 'function' and box.cfg or debug.getmetatable(box.cfg).__call
+	while true do
+		local n,v = debug.getupvalue(peekf,i)
+		if not n then break end
+		if peek[n] then
+			peek[n] = v
+		end
+		i = i + 1
+	end
+	for k,v in pairs(peek) do
+		if type(v) == 'boolean' then
+			peek[k] = nil
+		end
+	end
+	if peek.upgrade_cfg and not peek.translate_cfg then
+		error("Failed to peek translate_cfg")
+	end
+end
+
+-- TODO: suppress deprecation
+function prepare_box_cfg(cfg)
+	-- 1. take config, if have upgrade, upgrade it
+	if peek.upgrade_cfg then
+		cfg = peek.upgrade_cfg(cfg, peek.translate_cfg)
+	end
+
+	-- 2. check non-dynamic, and wipe them out
+	if type(box.cfg) ~= 'function' then
+		for key, val in pairs(cfg) do
+			if peek.dynamic_cfg[key] == nil and box.cfg[key] ~= val then
+				local warn = string.format(
+					"Can't change option '%s' dynamically from '%s' to '%s'",
+					key,box.cfg[key],val
+				)
+				log.warn("%s",warn)
+				print(warn)
+				cfg[key] = nil
+			end
+		end
+	end
+	return cfg
+end
+
 local readonly_mt = {
 	__index = function(_,k) return rawget(_,k) end;
 	__newindex = function(_,k)
@@ -190,6 +242,9 @@ local M
 			else
 				args = {}
 			end
+			if args.bypass_non_dynamic == nil then
+				args.bypass_non_dynamic = true
+			end
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
@@ -217,6 +272,9 @@ local M
 				error("No box.* config given", 2)
 			end
 
+			if args.bypass_non_dynamic then
+				cfg.box = prepare_box_cfg(cfg.box)
+			end
 
 			deep_merge(cfg,{
 				sys = deep_copy(args)
@@ -262,15 +320,11 @@ local M
 				-- cfg.box.replication = nil
 				-- cfg.box.replication_source = nil
 
-				if type(box.cfg) == 'function' then
+				-- if type(box.cfg) == 'function' then
+				-- 	box.cfg( cfg.box )
+				-- else
 					box.cfg( cfg.box )
-				else
-					cfg.box.pid_file = nil
-					cfg.box.background = nil
-					--print("Hide bad options")
-					--require'log'.info("Hide bad options")
-					box.cfg( cfg.box )
-				end
+				-- end
 
 				-- if replication then
 				-- 	box.cfg{ replication = replication }
