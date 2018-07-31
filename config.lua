@@ -15,7 +15,22 @@ local peek = {
 
 do
 	local i = 1
-	local peekf = type(box.cfg) == 'function' and box.cfg or debug.getmetatable(box.cfg).__call
+	local peekf
+	if type(box.cfg) == 'function' then
+		peekf = box.cfg
+		while true do
+			local n,v = debug.getupvalue(box.cfg,i)
+			if not n then break end
+			if n == 'orig_cfg' then
+				peekf = v
+				break
+			end
+			i = i + 1
+		end
+		i = 1
+	else
+		peekf = debug.getmetatable(box.cfg).__call
+	end
 	while true do
 		local n,v = debug.getupvalue(peekf,i)
 		if not n then break end
