@@ -144,6 +144,67 @@ local function deep_copy(src)
 	return t
 end
 
+local function is_array(a)
+	local len = 0
+	for k,v in pairs(a) do
+		len = len + 1
+		if type(k) ~= 'number' then
+			return false
+		end
+	end
+	return #a == len
+end
+
+--[[
+	returns config diff
+	1. deleted values returned as box.NULL
+	2. arrays is replaced completely
+	3. nil means no diff (and not stored in tables)
+]]
+
+local function value_diff(old,new)
+	if type(old) ~= type(new) then
+		return new
+	elseif type(old) == 'table' then
+		if new == old then return end
+
+		if is_array(old) then
+			if #new ~= #old then return new end
+			for i = 1,#old do
+				local diff = value_diff(old[i], new[i])
+				if diff ~= nil then
+					return new
+				end
+			end
+		else
+			local diff = {}
+			for k in pairs(old) do
+				if new[ k ] == nil then
+					diff[k] = box.NULL
+				else
+					local vdiff = value_diff(old[k], new[k])
+					if vdiff ~= nil then
+						diff[k] = vdiff
+					end
+				end
+			end
+			for k in pairs(new) do
+				if old[ k ] == nil then
+					diff[k] = new[k]
+				end
+			end
+			if next(diff) then
+				return diff
+			end
+		end
+	else
+		if old ~= new then
+			return new
+		end
+	end
+	return -- no diff
+end
+
 local function toboolean(v)
 	if v then
 		if type(v) == 'boolean' then return v end
@@ -204,15 +265,15 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	-- print("members: ",yaml.encode(members))
 	if my_cfg.cluster then
 		--if cfg.box.read_only then
-			cfg.box.replication = {}
+			local repl = {}
 			for _,member in pairs(members) do
 				--if not member.box.read_only then
-					table.insert(cfg.box.replication, member.box.listen)
+					table.insert(repl, member.box.listen)
 				--else
 				--	print("Skip ro member",member.box.listen)
 				--end
 			end
-			table.sort(cfg.box.replication, function(a,b)
+			table.sort(repl, function(a,b)
 				local ha,pa = a:match('^([^:]+):(.+)')
 				local hb,pb = a:match('^([^:]+):(.+)')
 				if pa and pb then
@@ -221,7 +282,20 @@ local function etcd_load( M, etcd_conf, local_cfg )
 				end
 				return a < b
 			end)
-			print("Start instance ",cfg.box.listen," with replication:",table.concat(cfg.box.replication,", "))
+			if cfg.box.replication then
+				print(
+					"Start instance ",cfg.box.listen,
+					" with locally overriden replication:",table.concat(cfg.box.replication,", "),
+					" instead of etcd's:", table.concat(repl,", ")
+				)
+			else
+				cfg.box.replication = repl
+				print(
+					"Start instance ",cfg.box.listen,
+					" with replication:",table.concat(cfg.box.replication,", ")
+				)
+			end
+
 		--end
 	end
 	-- print(yaml.encode(cfg))
@@ -284,51 +358,62 @@ local M
 			if args.bypass_non_dynamic == nil then
 				args.bypass_non_dynamic = true
 			end
+			if args.tidy_load == nil then
+				args.tidy_load = true
+			end
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
 				-- todo: maybe etcd?
 				if not file then error("Neither config call option given not -c|--config option passed",2) end
 			end
-			print(string.format("Loading config 1 %s %s", file, json.encode(args)))
-			local f,e = loadfile(file)
-			if not f then error(e,2) end
-			-- local cfg = setmetatable({},{__index = _G })
-			local cfg = setmetatable({},{ __index = setmetatable(args,{ __index = _G }) })
-			-- local cfg = setmetatable({},{__index = { print = _G.print, loadstring = _G.loadstring }})
-			setfenv(f,cfg)
-			f()
-			setmetatable(cfg,nil)
-			setmetatable(args,nil)
+			
+			print(string.format("Loading config %s %s", file, json.encode(args)))
+			
+			local function load_config()
+				
+				local f,e = loadfile(file)
+				if not f then error(e,2) end
+				-- local cfg = setmetatable({},{__index = _G })
+				local cfg = setmetatable({},{ __index = setmetatable(args,{ __index = _G }) })
+				-- local cfg = setmetatable({},{__index = { print = _G.print, loadstring = _G.loadstring }})
+				setfenv(f,cfg)
+				f()
+				setmetatable(cfg,nil)
+				setmetatable(args,nil)
 
-			-- subject to change, just a PoC
-			local etcd_conf = args.etcd or cfg.etcd
-			if etcd_conf then
-				cfg = etcd_load(M, etcd_conf, cfg)
+				-- subject to change, just a PoC
+				local etcd_conf = args.etcd or cfg.etcd
+				if etcd_conf then
+					cfg = etcd_load(M, etcd_conf, cfg)
+				end
+
+				if not cfg.box then
+					error("No box.* config given", 2)
+				end
+
+				if args.bypass_non_dynamic then
+					cfg.box = prepare_box_cfg(cfg.box)
+				end
+
+				deep_merge(cfg,{
+					sys = deep_copy(args)
+				})
+				cfg.sys.boxcfg = nil
+				cfg.sys.on_load = nil
+
+				-- if not cfg.box.custom_proc_title and args.instance_name then
+				-- 	cfg.box.custom_proc_title = args.instance_name
+				-- end
+
+				-- latest modifications and fixups
+				if args.on_load then
+					args.on_load(M,cfg)
+				end
+				return cfg
 			end
-
-			if not cfg.box then
-				error("No box.* config given", 2)
-			end
-
-			if args.bypass_non_dynamic then
-				cfg.box = prepare_box_cfg(cfg.box)
-			end
-
-			deep_merge(cfg,{
-				sys = deep_copy(args)
-			})
-			cfg.sys.boxcfg = nil
-			cfg.sys.on_load = nil
-
-			-- if not cfg.box.custom_proc_title and args.instance_name then
-			-- 	cfg.box.custom_proc_title = args.instance_name
-			-- end
-
-			-- latest modifications and fixups
-			if args.on_load then
-				args.on_load(M,cfg)
-			end
+			
+			local cfg = load_config()
 
 			M._flat = flatten(cfg)
 
@@ -356,7 +441,44 @@ local M
 				args.boxcfg( cfg.box )
 			else
 				if type(box.cfg) == 'function' then
-					box.cfg( cfg.box )
+					if M.etcd and args.tidy_load then
+						print("Have etcd, use tidy load")
+						local ro = cfg.box.read_only
+						cfg.box.read_only = true
+
+						log.info("Start tidy loading with ro=true (would be %s)",ro)
+
+						box.cfg( cfg.box )
+						
+						log.info("Reloading config after start")
+
+						local new_cfg = load_config()
+						local diff_box = value_diff(cfg.box, new_cfg.box)
+						
+						-- since load_config loads config also for reloading it removes non-dynamic options
+						-- therefore, they would be absent, but should not be passed. remove them
+						if diff_box then
+							for key, val in pairs(diff_box) do
+								if peek.dynamic_cfg[key] == nil then
+									diff_box[key] = nil
+								end
+							end
+							if not next(diff_box) then
+								diff_box = nil
+							end
+						end
+
+						if diff_box then
+							log.info("Reconfigure after load with %s",require'json'.encode(diff_box))
+							box.cfg(diff_box)
+						else
+							log.info("Config is actual after load")
+						end
+						
+						M._flat = flatten(new_cfg)
+					else
+						box.cfg( cfg.box )
+					end
 				else
 					local replication     = cfg.box.replication_source or cfg.box.replication
 					local box_replication = box.cfg.replication_source or box.cfg.replication
