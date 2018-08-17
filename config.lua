@@ -6,51 +6,79 @@ local yaml = require 'yaml'
 json.cfg{ encode_invalid_as_nil = true }
 -- yaml.cfg{ encode_invalid_as_nil = true }
 
-local peek = {
-	dynamic_cfg   = true;
-	upgrade_cfg   = true;
-	translate_cfg = true;
-	log           = true;
-}
-
-do
+local function lookaround(fun)
+	local vars = {}
 	local i = 1
-	local peekf
-	if type(box.cfg) == 'function' then
-		peekf = box.cfg
-		while true do
-			local n,v = debug.getupvalue(box.cfg,i)
-			if not n then break end
-			if n == 'orig_cfg' then
-				peekf = v
-				break
-			end
-			i = i + 1
-		end
-		i = 1
-	else
-		peekf = debug.getmetatable(box.cfg).__call
-	end
 	while true do
-		local n,v = debug.getupvalue(peekf,i)
+		local n,v = debug.getupvalue(fun,i)
 		if not n then break end
-		if peek[n] then
-			peek[n] = v
-		end
+		vars[n] = v
 		i = i + 1
 	end
-	for k,v in pairs(peek) do
-		if type(v) == 'boolean' then
-			peek[k] = nil
-		end
-	end
-	if peek.upgrade_cfg and not peek.translate_cfg then
-		error("Failed to peek translate_cfg")
-	end
+	i = 1
+	
+	return vars, i - 1
 end
 
+local function peek_vars()
+	local peek = {
+		dynamic_cfg   = true;
+		upgrade_cfg   = true;
+		translate_cfg = true;
+		log           = true;
+	}
+	
+	local steps = {}
+	local peekf = box.cfg
+	local allow_lock_unwrap = true
+	local allow_ctl_unwrap = true
+	while true do
+		local prevf = peekf
+		local mt = debug.getmetatable(peekf)
+		if type(peekf) == 'function' then
+			-- pass
+			table.insert(steps,"func")
+		elseif mt and mt.__call then
+			peekf = mt.__call
+			table.insert(steps,"mt_call")
+		else
+			error(string.format("Neither function nor callable argument %s after steps: %s", peekf, table.concat(steps, ", ")))
+		end
+		
+		local vars, count = lookaround(peekf)
+		if allow_ctl_unwrap and vars.orig_cfg then
+			-- It's a wrap of tarantoolctl, unwrap and repeat
+			peekf = vars.orig_cfg
+			allow_ctl_unwrap = false
+			table.insert(steps,"ctl-orig")
+		elseif not vars.dynamic_cfg and vars.lock and vars.f and type(vars.f) == 'function' then
+			peekf = vars.f
+			table.insert(steps,"lock-unwrap")
+		elseif vars.dynamic_cfg then
+			log.info("Found config by steps: %s", table.concat(steps, ", "))
+			for k,v in pairs(peek) do
+				if vars[k] ~= nil then
+					peek[k] = vars[k]
+				else
+					peek[k] = nil
+				end
+			end
+			break
+		else
+			for k,v in pairs(vars) do log.info("var %s=%s",k,v) end
+			error(string.format("Bad vars for %s after steps: %s", peekf, table.concat(steps, ", ")))
+		end
+		if prevf == peekf then
+			error(string.format("Recursion for %s after steps: %s", peekf, table.concat(steps, ", ")))
+		end
+	end
+	return peek
+end
+
+local peek = peek_vars()
+
 -- TODO: suppress deprecation
-function prepare_box_cfg(cfg)
+local function prepare_box_cfg(cfg)
 	-- 1. take config, if have upgrade, upgrade it
 	if peek.upgrade_cfg then
 		cfg = peek.upgrade_cfg(cfg, peek.translate_cfg)
