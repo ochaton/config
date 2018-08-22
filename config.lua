@@ -54,6 +54,9 @@ local function peek_vars()
 		elseif not vars.dynamic_cfg and vars.lock and vars.f and type(vars.f) == 'function' then
 			peekf = vars.f
 			table.insert(steps,"lock-unwrap")
+		elseif not vars.dynamic_cfg and vars.old_call and type(vars.old_call) == 'function' then
+			peekf = vars.old_call
+			table.insert(steps,"ctl-oldcall")
 		elseif vars.dynamic_cfg then
 			log.info("Found config by steps: %s", table.concat(steps, ", "))
 			for k,v in pairs(peek) do

@@ -64,6 +64,9 @@ function peek_vars()
 		elseif not vars.dynamic_cfg and vars.lock and vars.f and type(vars.f) == 'function' then
 			peekf = vars.f
 			table.insert(steps,"lock-unwrap")
+		elseif not vars.dynamic_cfg and vars.old_call and type(vars.old_call) == 'function' then
+			peekf = vars.old_call
+			table.insert(steps,"ctl-oldcall")
 		elseif vars.dynamic_cfg then
 			log.info("Found config by steps: %s", table.concat(steps, ", "))
 			for k,v in pairs(peek) do
@@ -86,7 +89,7 @@ function peek_vars()
 end
 
 do
-	local peek = test_peek()
+	local peek = peek_vars()
 	assert(type(peek.dynamic_cfg)=='table',"have dynamic_cfg")
 	log.info("1st run: %s",json.encode(peek))
 end
@@ -95,7 +98,7 @@ box.cfg{ log_level = 2 }
 
 do
 	print("Do run 2")
-	local peek = test_peek()
+	local peek = peek_vars()
 	print("2nd run: ",json.encode(peek))
 	log.error("2nd run: %s",json.encode(peek))
 	assert(type(peek.dynamic_cfg)=='table',"have dynamic_cfg")
