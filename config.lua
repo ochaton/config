@@ -25,6 +25,7 @@ local function peek_vars()
 		dynamic_cfg   = true;
 		upgrade_cfg   = true;
 		translate_cfg = true;
+		template_cfg  = true;
 		log           = true;
 	}
 	
@@ -86,7 +87,7 @@ local function prepare_box_cfg(cfg)
 	if peek.upgrade_cfg then
 		cfg = peek.upgrade_cfg(cfg, peek.translate_cfg)
 	end
-
+	
 	-- 2. check non-dynamic, and wipe them out
 	if type(box.cfg) ~= 'function' then
 		for key, val in pairs(cfg) do
@@ -101,6 +102,7 @@ local function prepare_box_cfg(cfg)
 			end
 		end
 	end
+	
 	return cfg
 end
 
@@ -286,6 +288,16 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	local my_cfg = inst_cfg[instance_name]
 	assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
 	deep_merge(cfg, my_cfg)
+	
+	for k,v in pairs(cfg.box) do
+		if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
+			cfg.box[k] = cfg.box[k] == 'true'
+		end
+	end
+	if M.default_read_only and cfg.box.read_only == nil then
+		log.info("Instance have no read_only option, set read_only=true")
+		cfg.box.read_only = true
+	end
 
 	local members = {}
 	for k,v in pairs(inst_cfg) do
@@ -407,6 +419,7 @@ local M
 			if args.tidy_load == nil then
 				args.tidy_load = true
 			end
+			M.default_read_only = args.default_read_only or false
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
