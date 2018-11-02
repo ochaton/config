@@ -282,9 +282,6 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	-- print(yaml.encode(cfg))
 
 	local inst_cfg = etcd:list(prefix .. "/instances")
-	for k,v in pairs(inst_cfg) do
-		v.box.read_only = v.box.read_only == 'true'
-	end
 	local my_cfg = inst_cfg[instance_name]
 	assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
 	deep_merge(cfg, my_cfg)
