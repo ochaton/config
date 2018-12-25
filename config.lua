@@ -266,6 +266,71 @@ local function toboolean(v)
 	return false
 end
 
+local master_selection_policies = {
+	['etcd.instance.read_only'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		local cfg = {}
+		deep_merge(cfg, common_cfg)
+		-- log.info("common=%s",json.encode(common_cfg))
+		deep_merge(cfg, instance_cfg)
+		-- log.info("instance=%s",json.encode(instance_cfg))
+
+		if cluster_cfg then
+			log.info("cluster=%s",json.encode(cluster_cfg))
+			assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
+			cfg.box.replicaset_uuid = cluster_cfg.replicaset_uuid
+		end
+		
+		if M.default_read_only and cfg.box.read_only == nil then
+			log.info("Instance have no read_only option, set read_only=true")
+			cfg.box.read_only = true
+		end
+
+		deep_merge(cfg, local_cfg)
+		
+		log.info("Using policy etcd.instance.read_only, read_only=%s",cfg.box.read_only)
+		return cfg
+	end;
+	['etcd.cluster.master'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		log.info("Using policy etcd.cluster.master")
+		local cfg = {}
+		deep_merge(cfg, common_cfg)
+		deep_merge(cfg, instance_cfg)
+
+		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
+		cfg.box.replicaset_uuid = cluster_cfg.replicaset_uuid
+		
+		if cfg.box.read_only ~= nil then
+			log.info("Ignore box.read_only=%s value due to config policy",cfg.box.read_only)
+		end
+		if cluster_cfg.master then
+			if cluster_cfg.master == instance_name then
+				log.info("Instance is declared as cluster master, set read_only=false")
+				cfg.box.read_only = false
+			else
+				log.info("Cluster has another master %s, not me %s, set read_only=true", cluster_cfg.master, instance_name)
+				cfg.box.read_only = true
+			end
+		else
+			log.info("Claster have no declared master, set read_only=true")
+			cfg.box.read_only = true
+		end
+		
+		deep_merge(cfg, local_cfg)
+		
+		return cfg
+	end;
+}
+
+local function cast_types(c)
+	if c then
+		for k,v in pairs(c) do
+			if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
+				c[k] = c[k] == 'true'
+			end
+		end
+	end
+end
+
 local function etcd_load( M, etcd_conf, local_cfg )
 
 	local etcd = require 'config.etcd' (etcd_conf)
@@ -276,28 +341,55 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	local instance_name = assert(etcd_conf.instance_name,"etcd.instance_name is required")
 	local prefix = assert(etcd_conf.prefix,"etcd.prefix is required")
 
-	local cfg = etcd:list(prefix .. "/common")
-	assert(cfg.box,"no box config in etcd common tree")
-
-	-- print(yaml.encode(cfg))
-
-	local inst_cfg = etcd:list(prefix .. "/instances")
-	local my_cfg = inst_cfg[instance_name]
-	assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
-	deep_merge(cfg, my_cfg)
+	local common_cfg = etcd:list(prefix .. "/common")
+	assert(common_cfg.box,"no box config in etcd common tree")
+	cast_types(common_cfg.box)
 	
-	for k,v in pairs(cfg.box) do
-		if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
-			cfg.box[k] = cfg.box[k] == 'true'
-		end
+	local all_instances_cfg = etcd:list(prefix .. "/instances")
+	for _,inst_cfg in pairs(all_instances_cfg) do
+		cast_types(inst_cfg.box)
 	end
-	if M.default_read_only and cfg.box.read_only == nil then
-		log.info("Instance have no read_only option, set read_only=true")
-		cfg.box.read_only = true
+	local instance_cfg = all_instances_cfg[instance_name]
+	assert(instance_cfg,"Instance name "..instance_name.." is not known to etcd")
+	
+	local cluster_cfg
+	if instance_cfg.cluster or local_cfg.cluster then
+		cluster_cfg = etcd:list(prefix.."/clusters/"..(instance_cfg.cluster or local_cfg.cluster))
+		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 	end
+	assert(cluster_cfg,"xxx");
+	
+	local master_policy = master_selection_policies[ M.master_selection_policy or 'etcd.instance.read_only' ]
+	if not master_policy then
+		error(string.format("Unknown master_selection_policy: %s",M.master_selection_policy),0)
+	end
+	
+	local cfg = master_policy(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+
+	-- local cfg = etcd:list(prefix .. "/common")
+	-- assert(cfg.box,"no box config in etcd common tree")
+
+	-- -- print(yaml.encode(cfg))
+
+	-- local inst_cfg = etcd:list(prefix .. "/instances")
+	-- local my_cfg = inst_cfg[instance_name]
+	-- assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
+	
+	-- deep_merge(cfg, my_cfg)
+	
+	
+	-- for k,v in pairs(cfg.box) do
+	-- 	if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
+	-- 		cfg.box[k] = cfg.box[k] == 'true'
+	-- 	end
+	-- end
+	-- if M.default_read_only and cfg.box.read_only == nil then
+	-- 	log.info("Instance have no read_only option, set read_only=true")
+	-- 	cfg.box.read_only = true
+	-- end
 
 	local members = {}
-	for k,v in pairs(inst_cfg) do
+	for k,v in pairs(all_instances_cfg) do
 		if v.cluster == cfg.cluster then -- and k ~= instance_name then
 			if not toboolean(v.disabled) then
 				table.insert(members,v)
@@ -307,18 +399,18 @@ local function etcd_load( M, etcd_conf, local_cfg )
 		end
 	end
 
-	if my_cfg.cluster then
-		local cls_cfg = etcd:list(prefix.."/clusters/"..my_cfg.cluster)
-		assert(cls_cfg.replicaset_uuid,"Need cluster uuid")
-		cfg.box.replicaset_uuid = cls_cfg.replicaset_uuid
-	end
+	-- if my_cfg.cluster then
+	-- 	local cls_cfg = etcd:list(prefix.."/clusters/"..my_cfg.cluster)
+	-- 	assert(cls_cfg.replicaset_uuid,"Need cluster uuid")
+	-- 	cfg.box.replicaset_uuid = cls_cfg.replicaset_uuid
+	-- end
 
 
 	-- now, put local cfg over calculated
-	deep_merge(cfg,local_cfg)
+	-- deep_merge(cfg,local_cfg)
 
 	-- print("members: ",yaml.encode(members))
-	if my_cfg.cluster then
+	if cfg.cluster then
 		--if cfg.box.read_only then
 			local repl = {}
 			for _,member in pairs(members) do
@@ -417,6 +509,7 @@ local M
 				args.tidy_load = true
 			end
 			M.default_read_only = args.default_read_only or false
+			M.master_selection_policy = args.master_selection_policy
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
