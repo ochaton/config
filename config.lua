@@ -16,7 +16,7 @@ local function lookaround(fun)
 		i = i + 1
 	end
 	i = 1
-	
+
 	return vars, i - 1
 end
 
@@ -28,7 +28,7 @@ local function peek_vars()
 		template_cfg  = true;
 		log           = true;
 	}
-	
+
 	local steps = {}
 	local peekf = box.cfg
 	local allow_lock_unwrap = true
@@ -45,7 +45,7 @@ local function peek_vars()
 		else
 			error(string.format("Neither function nor callable argument %s after steps: %s", peekf, table.concat(steps, ", ")))
 		end
-		
+
 		local vars, count = lookaround(peekf)
 		if allow_ctl_unwrap and vars.orig_cfg then
 			-- It's a wrap of tarantoolctl, unwrap and repeat
@@ -87,7 +87,7 @@ local function prepare_box_cfg(cfg)
 	if peek.upgrade_cfg then
 		cfg = peek.upgrade_cfg(cfg, peek.translate_cfg)
 	end
-	
+
 	-- 2. check non-dynamic, and wipe them out
 	if type(box.cfg) ~= 'function' then
 		for key, val in pairs(cfg) do
@@ -102,7 +102,7 @@ local function prepare_box_cfg(cfg)
 			end
 		end
 	end
-	
+
 	return cfg
 end
 
@@ -279,14 +279,14 @@ local master_selection_policies = {
 			assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 			cfg.box.replicaset_uuid = cluster_cfg.replicaset_uuid
 		end
-		
+
 		if M.default_read_only and cfg.box.read_only == nil then
 			log.info("Instance have no read_only option, set read_only=true")
 			cfg.box.read_only = true
 		end
 
 		deep_merge(cfg, local_cfg)
-		
+
 		log.info("Using policy etcd.instance.read_only, read_only=%s",cfg.box.read_only)
 		return cfg
 	end;
@@ -298,7 +298,7 @@ local master_selection_policies = {
 
 		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 		cfg.box.replicaset_uuid = cluster_cfg.replicaset_uuid
-		
+
 		if cfg.box.read_only ~= nil then
 			log.info("Ignore box.read_only=%s value due to config policy",cfg.box.read_only)
 		end
@@ -314,9 +314,9 @@ local master_selection_policies = {
 			log.info("Claster have no declared master, set read_only=true")
 			cfg.box.read_only = true
 		end
-		
+
 		deep_merge(cfg, local_cfg)
-		
+
 		return cfg
 	end;
 }
@@ -344,26 +344,26 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	local common_cfg = etcd:list(prefix .. "/common")
 	assert(common_cfg.box,"no box config in etcd common tree")
 	cast_types(common_cfg.box)
-	
+
 	local all_instances_cfg = etcd:list(prefix .. "/instances")
 	for _,inst_cfg in pairs(all_instances_cfg) do
 		cast_types(inst_cfg.box)
 	end
 	local instance_cfg = all_instances_cfg[instance_name]
 	assert(instance_cfg,"Instance name "..instance_name.." is not known to etcd")
-	
+
 	local cluster_cfg
 	if instance_cfg.cluster or local_cfg.cluster then
 		cluster_cfg = etcd:list(prefix.."/clusters/"..(instance_cfg.cluster or local_cfg.cluster))
 		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 	end
 	assert(cluster_cfg,"xxx");
-	
+
 	local master_policy = master_selection_policies[ M.master_selection_policy or 'etcd.instance.read_only' ]
 	if not master_policy then
 		error(string.format("Unknown master_selection_policy: %s",M.master_selection_policy),0)
 	end
-	
+
 	local cfg = master_policy(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
 
 	-- local cfg = etcd:list(prefix .. "/common")
@@ -374,10 +374,10 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	-- local inst_cfg = etcd:list(prefix .. "/instances")
 	-- local my_cfg = inst_cfg[instance_name]
 	-- assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
-	
+
 	-- deep_merge(cfg, my_cfg)
-	
-	
+
+
 	-- for k,v in pairs(cfg.box) do
 	-- 	if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
 	-- 		cfg.box[k] = cfg.box[k] == 'true'
@@ -516,11 +516,11 @@ local M
 				-- todo: maybe etcd?
 				if not file then error("Neither config call option given not -c|--config option passed",2) end
 			end
-			
+
 			print(string.format("Loading config %s %s", file, json.encode(args)))
-			
+
 			local function load_config()
-				
+
 				local f,e = loadfile(file)
 				if not f then error(e,2) end
 				-- local cfg = setmetatable({},{__index = _G })
@@ -535,6 +535,10 @@ local M
 				local etcd_conf = args.etcd or cfg.etcd
 				if etcd_conf then
 					cfg = etcd_load(M, etcd_conf, cfg)
+				end
+
+				if args.load then
+					cfg = args.load(M, cfg)
 				end
 
 				if not cfg.box then
@@ -561,7 +565,7 @@ local M
 				end
 				return cfg
 			end
-			
+
 			local cfg = load_config()
 
 			M._flat = flatten(cfg)
@@ -598,12 +602,12 @@ local M
 						log.info("Start tidy loading with ro=true (would be %s)",ro)
 
 						box.cfg( cfg.box )
-						
+
 						log.info("Reloading config after start")
 
 						local new_cfg = load_config()
 						local diff_box = value_diff(cfg.box, new_cfg.box)
-						
+
 						-- since load_config loads config also for reloading it removes non-dynamic options
 						-- therefore, they would be absent, but should not be passed. remove them
 						if diff_box then
@@ -623,7 +627,7 @@ local M
 						else
 							log.info("Config is actual after load")
 						end
-						
+
 						M._flat = flatten(new_cfg)
 					else
 						box.cfg( cfg.box )
