@@ -443,6 +443,10 @@ local M
 				if etcd_conf then
 					cfg = etcd_load(M, etcd_conf, cfg)
 				end
+				
+				if args.load then
+					cfg = args.load(M, cfg)
+				end
 
 				if not cfg.box then
 					error("No box.* config given", 2)
