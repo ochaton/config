@@ -173,15 +173,17 @@ local function get_opt()
 	end
 end
 
-local function deep_merge(dst,src)
+local function deep_merge(dst,src,keep)
 	-- TODO: think of cyclic
 	if not src or not dst then error("Call to deepmerge with bad args",2) end
 	for k,v in pairs(src) do
 		if type(v) == 'table' then
 			if not dst[k] then dst[k] = {} end
-			deep_merge(dst[k],src[k])
+			deep_merge(dst[k],src[k],keep)
 		else
-			dst[k] = src[k]
+			if dst[k] == nil or not keep then
+				dst[k] = src[k]
+			end
 		end
 	end
 end
@@ -267,26 +269,47 @@ local function toboolean(v)
 end
 
 local master_selection_policies = {
+	['etcd.instance.single'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		local cfg = {}
+		deep_merge(cfg, common_cfg)
+		deep_merge(cfg, instance_cfg)
+		
+		if cluster_cfg then
+			error("Cluster config should not exist for single instance config")
+		end
+		
+		deep_merge(cfg, local_cfg)
+		
+		if cfg.box.read_only == nil then
+			log.info("Instance have no read_only option, set read_only=false")
+			cfg.box.read_only = false
+		end
+		
+		if cfg.box.instance_uuid and not cfg.box.replicaset_uuid then
+			cfg.box.replicaset_uuid = cfg.box.instance_uuid
+		end
+		
+		log.info("Using policy etcd.instance.single, read_only=%s",cfg.box.read_only)
+		return cfg
+	end;
 	['etcd.instance.read_only'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
 		local cfg = {}
 		deep_merge(cfg, common_cfg)
-		-- log.info("common=%s",json.encode(common_cfg))
 		deep_merge(cfg, instance_cfg)
-		-- log.info("instance=%s",json.encode(instance_cfg))
-
+		
 		if cluster_cfg then
 			log.info("cluster=%s",json.encode(cluster_cfg))
 			assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 			cfg.box.replicaset_uuid = cluster_cfg.replicaset_uuid
 		end
-
+		
+		deep_merge(cfg, local_cfg)
+		
 		if M.default_read_only and cfg.box.read_only == nil then
 			log.info("Instance have no read_only option, set read_only=true")
 			cfg.box.read_only = true
 		end
-
-		deep_merge(cfg, local_cfg)
-
+		
 		log.info("Using policy etcd.instance.read_only, read_only=%s",cfg.box.read_only)
 		return cfg
 	end;
@@ -352,19 +375,24 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	local instance_cfg = all_instances_cfg[instance_name]
 	assert(instance_cfg,"Instance name "..instance_name.." is not known to etcd")
 
+	local master_selection_policy
 	local cluster_cfg
 	if instance_cfg.cluster or local_cfg.cluster then
 		cluster_cfg = etcd:list(prefix.."/clusters/"..(instance_cfg.cluster or local_cfg.cluster))
+		assert(cluster_cfg,"Cluster section required");
 		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
+		master_selection_policy = M.master_selection_policy or 'etcd.instance.read_only'
+	else
+		master_selection_policy = M.master_selection_policy or 'etcd.instance.single'
 	end
-	assert(cluster_cfg,"xxx");
 
-	local master_policy = master_selection_policies[ M.master_selection_policy or 'etcd.instance.read_only' ]
+	local master_policy = master_selection_policies[ master_selection_policy ]
 	if not master_policy then
 		error(string.format("Unknown master_selection_policy: %s",M.master_selection_policy),0)
 	end
-
+	
 	local cfg = master_policy(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+
 
 	-- local cfg = etcd:list(prefix .. "/common")
 	-- assert(cfg.box,"no box config in etcd common tree")
@@ -510,6 +538,7 @@ local M
 			end
 			M.default_read_only = args.default_read_only or false
 			M.master_selection_policy = args.master_selection_policy
+			M.default = args.default
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
@@ -530,6 +559,7 @@ local M
 				f()
 				setmetatable(cfg,nil)
 				setmetatable(args,nil)
+				deep_merge(cfg,args.default or {},'keep')
 
 				-- subject to change, just a PoC
 				local etcd_conf = args.etcd or cfg.etcd

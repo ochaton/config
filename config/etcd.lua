@@ -103,7 +103,7 @@ function M:request(method, path, args )
 	for _,endpoint in pairs(self.endpoints) do
 		local uri = string.format("%s/v2/%s%s", self.current, path, qs )
 		-- print("[debug] "..uri)
-		local x = self.client.request(method,uri,body,{timeout = self.timeout or 1; headers = self.headers})
+		local x = self.client.request(method,uri,body,{timeout = args.timeout or self.timeout or 1; headers = self.headers})
 		local status,reply = pcall(json.decode,x and x.body)
 		if x.status < 500 then
 			if status then
