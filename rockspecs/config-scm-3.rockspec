@@ -2,7 +2,7 @@ package = 'config'
 version = 'scm-3'
 source  = {
     url    = 'git://github.com/moonlibs/config.git',
-    branch = 'master',
+    branch = 'v3',
 }
 description = {
     summary  = "Package for loading external lua config",
