@@ -80,7 +80,7 @@ function M:discovery()
 	print("etcd endpoints "..table.concat(new_endpoints,", "))
 	self.endpoints = new_endpoints
 	table.insert(self.endpoints,table.remove(self.endpoints,1))
-	self.current = self.endpoints[1]
+	self.current = math.random(#self.endpoints)
 end
 
 function M:request(method, path, args )
@@ -100,13 +100,21 @@ function M:request(method, path, args )
 	local body = args and args.body or ''
 	local lasterror
 
-	for _,endpoint in pairs(self.endpoints) do
-		local uri = string.format("%s/v2/%s%s", self.current, path, qs )
+	local len = #self.endpoints
+	for i = 0, len - 1 do
+		local cur = self.current + i
+		if cur > len then
+			cur = cur % len
+		end
+		local uri = string.format("%s/v2/%s%s", self.endpoints[cur], path, qs )
 		-- print("[debug] "..uri)
 		local x = self.client.request(method,uri,body,{timeout = args.timeout or self.timeout or 1; headers = self.headers})
 		local status,reply = pcall(json.decode,x and x.body)
-		if x.status < 500 then
+
+		-- 408 for timeout
+		if x.status < 500 and x.status ~= 408 then
 			if status then
+				self.current = cur
 				return reply
 			else
 				-- passthru
