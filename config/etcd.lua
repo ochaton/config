@@ -110,7 +110,9 @@ function M:request(method, path, args )
 		-- print("[debug] "..uri)
 		local x = self.client.request(method,uri,body,{timeout = args.timeout or self.timeout or 1; headers = self.headers})
 		local status,reply = pcall(json.decode,x and x.body)
-		if x.status < 500 then
+
+		-- 408 for timeout
+		if x.status < 500 and x.status ~= 408 then
 			if status then
 				self.current = cur
 				return reply
