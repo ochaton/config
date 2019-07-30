@@ -513,8 +513,14 @@ local M
 			end
 			if M._flat[k] ~= nil then
 				return M._flat[k]
-			else
+			elseif def ~= nil then
 				return def
+			else
+				if M.strict_mode then
+					error(string.format("no %s found in config", k))
+				else
+					return
+				end
 			end
 		end
 	},{
@@ -539,6 +545,7 @@ local M
 			M.default_read_only = args.default_read_only or false
 			M.master_selection_policy = args.master_selection_policy
 			M.default = args.default
+			M.strict_mode = args.strict_mode or false
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
