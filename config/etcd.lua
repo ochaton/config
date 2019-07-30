@@ -42,6 +42,7 @@ function M.new(M,options)
 	-- self.prefix    = options.prefix or ''
 	self.timeout   = options.timeout or 1
 	self.client    = http_client -- .new() - it fix for 1.6 also client: -> clent.
+	self.boolean_auto = options.boolean_auto
 	if options.login then
 		self.authorization = "Basic "..digest.base64_encode(options.login..":"..(options.password or ""))
 		self.headers = { authorization = self.authorization }
@@ -131,7 +132,7 @@ function M:request(method, path, args )
 	return lasterror
 end
 
-local function recursive_extract(cut, node, storage)
+function M:recursive_extract(cut, node, storage)
 	local _storage
 	if not storage then _storage = {} else _storage = storage end
 
@@ -145,10 +146,17 @@ local function recursive_extract(cut, node, storage)
 	if node.dir then
 		_storage[key] = {}
 		for _,v in pairs(node.nodes) do
-			recursive_extract(node.key, v, _storage[key])
+			self:recursive_extract(node.key, v, _storage[key])
 		end
 	else
 		-- ex: {"createdIndex":108,"modifiedIndex":108,"key":".../cluster","value":"instance_001"}
+		if self.boolean_auto then
+			if node.value == 'true' then
+				node.value = true
+			elseif node.value == 'false' then
+				node.value = false
+			end
+		end
 		local num = tonumber(node.value)
 		if num then
 			_storage[ key ] = num
@@ -166,7 +174,7 @@ function M:list(keyspath)
 	local res = self:request("GET","keys"..keyspath, { recursive = true })
 	-- print(yaml.encode(res))
 	if res.node then
-		local result = recursive_extract(keyspath,res.node)
+		local result = self:recursive_extract(keyspath,res.node)
 		-- todo: make it with metatable
 		-- print(yaml.encode(result))
 		return result
