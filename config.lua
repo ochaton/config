@@ -442,11 +442,11 @@ local function etcd_load( M, etcd_conf, local_cfg )
 		--if cfg.box.read_only then
 			local repl = {}
 			for _,member in pairs(members) do
-				--if not member.box.read_only then
+				if member.box.remote_addr then
+					table.insert(repl, member.box.remote_addr)
+				else
 					table.insert(repl, member.box.listen)
-				--else
-				--	print("Skip ro member",member.box.listen)
-				--end
+				end
 			end
 			table.sort(repl, function(a,b)
 				local ha,pa = a:match('^([^:]+):(.+)')
@@ -466,8 +466,13 @@ local function etcd_load( M, etcd_conf, local_cfg )
 			else
 				cfg.box.replication = repl
 				print(
-					"Start instance ",cfg.box.listen,
-					" with replication:",table.concat(cfg.box.replication,", ")
+					"Start instance "..cfg.box.listen,
+					" with replication:"..table.concat(cfg.box.replication,", "),
+					string.format("timeout: %s, quorum: %s, lag: %s",
+						cfg.box.replication_connect_timeout or 'def:30',
+						cfg.box.replication_connect_quorum or 'def:full',
+						cfg.box.replication_sync_lag or 'def:10'
+					)
 				)
 			end
 
@@ -545,7 +550,7 @@ local M
 			M.default_read_only = args.default_read_only or false
 			M.master_selection_policy = args.master_selection_policy
 			M.default = args.default
-			M.strict_mode = args.strict_mode or false
+			M.strict_mode = args.strict_mode or args.strict or false
 			-- print("config", "loading ",file, json.encode(args))
 			if not file then
 				file = get_opt()
@@ -625,19 +630,45 @@ local M
 					end
 				end
 			end
-
-			-- print(string.format("Starting app: %s", yaml.encode(cfg.box)))
+			
+			if cfg.box.remote_addr then
+				cfg.box.remote_addr = nil
+			end
+			
+			print(string.format("Starting app: %s", yaml.encode(cfg.box)))
 			if args.boxcfg then
 				args.boxcfg( cfg.box )
 			else
 				if type(box.cfg) == 'function' then
-					if M.etcd and args.tidy_load then
-						print("Have etcd, use tidy load")
-						local ro = cfg.box.read_only
-						cfg.box.read_only = true
-
-						log.info("Start tidy loading with ro=true (would be %s)",ro)
-
+					if M.etcd then
+						if args.tidy_load then
+							local snap_dir = cfg.box.snap_dir or cfg.box.memtx_dir
+							if not snap_dir then
+								if cfg.box.work_dir then
+									snap_dir = cfg.box.work_dir
+								else
+									snap_dir = "."
+								end
+							end
+							local bootstrapped = false
+							local fio = require 'fio'
+							for _,v in pairs(fio.glob(snap_dir..'/*.snap')) do
+								bootstrapped = v
+							end
+							
+							if bootstrapped then
+								print("Have etcd, use tidy load")
+								local ro = cfg.box.read_only
+								cfg.box.read_only = true
+								log.info("Start tidy loading with ro=true%s (snap=%s)",
+									ro ~= true and string.format(' (would be %s)',ro) or '',
+									bootstrapped
+								)
+							else
+								log.info("Start non-bootstrapped tidy loading with ro=%s (dir=%s)",cfg.box.read_only, snap_dir)
+							end
+						end
+						
 						box.cfg( cfg.box )
 
 						log.info("Reloading config after start")
