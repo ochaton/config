@@ -614,6 +614,9 @@ local M
 
 			if args.mkdir then
 				local fio = require 'fio'
+				if not ( fio.path and fio.mkdir ) then
+					error(string.format("Tarantool version %s is too old for mkdir: fio.path is not supported", _TARANTOOL),2)
+				end
 				for _,key in pairs({"work_dir", "wal_dir", "snap_dir", "memtx_dir", "vinyl_dir"}) do
 					local v = cfg.box[key]
 					if v and not fio.path.exists(v) then
