@@ -58,6 +58,9 @@ local function peek_vars()
 		elseif not vars.dynamic_cfg and vars.old_call and type(vars.old_call) == 'function' then
 			peekf = vars.old_call
 			table.insert(steps,"ctl-oldcall")
+		elseif not vars.dynamic_cfg and vars.orig_cfg_call and type(vars.orig_cfg_call) == 'function' then
+			peekf = vars.orig_cfg_call
+			table.insert(steps,"ctl-orig_cfg_call")
 		elseif vars.dynamic_cfg then
 			log.info("Found config by steps: %s", table.concat(steps, ", "))
 			for k,v in pairs(peek) do
