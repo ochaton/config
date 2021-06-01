@@ -99,7 +99,7 @@ function M:request(method, path, args )
 	local qs
 	if #query > 0 then qs = '?'..table.concat(query) else  qs = '' end
 	local body = args and args.body or ''
-	local lasterror
+	local lasterror, lastresponse
 
 	local len = #self.endpoints
 	for i = 0, len - 1 do
@@ -110,13 +110,14 @@ function M:request(method, path, args )
 		local uri = string.format("%s/v2/%s%s", self.endpoints[cur], path, qs )
 		-- print("[debug] "..uri)
 		local x = self.client.request(method,uri,body,{timeout = args.timeout or self.timeout or 1; headers = self.headers})
+		lastresponse = x
 		local status,reply = pcall(json.decode,x and x.body)
 
 		-- 408 for timeout
 		if x.status < 500 and x.status ~= 408 then
 			if status then
 				self.current = cur
-				return reply
+				return reply, lastresponse
 			else
 				-- passthru
 				lasterror = { errorCode = 500, message = x.reason }
@@ -129,7 +130,7 @@ function M:request(method, path, args )
 			end
 		end
 	end
-	return lasterror
+	return lasterror, lastresponse
 end
 
 function M:recursive_extract(cut, node, storage)
@@ -171,19 +172,30 @@ function M:recursive_extract(cut, node, storage)
 end
 
 function M:list(keyspath)
-	local res = self:request("GET","keys"..keyspath, { recursive = true })
+	local res, response = self:request("GET","keys"..keyspath, { recursive = true })
 	-- print(yaml.encode(res))
 	if res.node then
 		local result = self:recursive_extract(keyspath,res.node)
 		-- todo: make it with metatable
 		-- print(yaml.encode(result))
-		return result
+		return result, response
 		-- for _,n in pairs(res.node) do
 		-- 	print()
 		-- end
 	else
 		error(json.encode(res),2)
 	end
+end
+
+function M:wait(keyspath, args)
+	args = args or {}
+	local _, response = self:request("GET","keys"..keyspath, {
+		wait = true,
+		recursive = true,
+		timeout = args.timeout,
+		waitIndex = args.index,
+	})
+	return response.status ~= 408, response
 end
 
 return M
