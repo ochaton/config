@@ -172,7 +172,7 @@ function M:recursive_extract(cut, node, storage)
 end
 
 function M:list(keyspath)
-	local res, response = self:request("GET","keys"..keyspath, { recursive = true })
+	local res, response = self:request("GET","keys"..keyspath, { recursive = true, quorum = true })
 	-- print(yaml.encode(res))
 	if res.node then
 		local result = self:recursive_extract(keyspath,res.node)
@@ -192,6 +192,7 @@ function M:wait(keyspath, args)
 	local _, response = self:request("GET","keys"..keyspath, {
 		wait = true,
 		recursive = true,
+		quorum = true,
 		timeout = args.timeout,
 		waitIndex = args.index,
 	})
