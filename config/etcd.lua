@@ -192,7 +192,6 @@ function M:wait(keyspath, args)
 	local _, response = self:request("GET","keys"..keyspath, {
 		wait = true,
 		recursive = true,
-		quorum = true,
 		timeout = args.timeout,
 		waitIndex = args.index,
 	})
