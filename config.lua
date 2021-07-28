@@ -690,7 +690,7 @@ local M
 			end
 			
 			-- print(string.format("Starting app: %s", yaml.encode(cfg.box)))
-			local boxcfg = box.cfg
+			local boxcfg
 
 			if args.boxcfg then
 				args.boxcfg( cfg.box )
@@ -728,7 +728,7 @@ local M
 							end
 						end
 						
-						boxcfg( cfg.box )
+						(boxcfg or box.cfg)( cfg.box )
 
 						log.info("Reloading config after start")
 
@@ -750,14 +750,14 @@ local M
 
 						if diff_box then
 							log.info("Reconfigure after load with %s",require'json'.encode(diff_box))
-							boxcfg(diff_box)
+							;(boxcfg or box.cfg)(diff_box)
 						else
 							log.info("Config is actual after load")
 						end
 
 						M._flat = flatten(new_cfg)
 					else
-						boxcfg( cfg.box )
+						(boxcfg or box.cfg)( cfg.box )
 					end
 				else
 					local replication     = cfg.box.replication_source or cfg.box.replication
@@ -769,12 +769,12 @@ local M
 						cfg.box.replication        = nil
 						cfg.box.replication_source = nil
 
-						boxcfg( cfg.box )
+						(boxcfg or box.cfg)( cfg.box )
 
 						cfg.box.replication        = r
 						cfg.box.replication_source = rs
 					else
-						boxcfg( cfg.box )
+						(boxcfg or box.cfg)( cfg.box )
 					end
 				end
 			end
