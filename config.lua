@@ -462,7 +462,8 @@ local function etcd_load( M, etcd_conf, local_cfg )
 		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 		master_selection_policy = M.master_selection_policy or 'etcd.instance.read_only'
 	elseif instance_cfg.router then
-
+		-- TODO
+		master_selection_policy = M.master_selection_policy or 'etcd.instance.single'
 	else
 		master_selection_policy = M.master_selection_policy or 'etcd.instance.single'
 	end
