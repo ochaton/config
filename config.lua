@@ -3,6 +3,7 @@ local con = require 'console'
 local fiber = require 'fiber'
 local json = require 'json'
 local yaml = require 'yaml'
+local digest = require 'digest'
 json.cfg{ encode_invalid_as_nil = true }
 -- yaml.cfg{ encode_invalid_as_nil = true }
 
@@ -271,7 +272,8 @@ local function toboolean(v)
 	return false
 end
 
-local master_selection_policies = {
+local master_selection_policies;
+master_selection_policies = {
 	['etcd.instance.single'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
 		local cfg = {}
 		deep_merge(cfg, common_cfg)
@@ -345,6 +347,14 @@ local master_selection_policies = {
 
 		return cfg
 	end;
+	['etcd.cluster.vshard'] = function(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		log.info("Using policy etcd.cluster.vshard")
+		if instance_cfg.cluster then
+			return master_selection_policies['etcd.cluster.master'](M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		else
+			return master_selection_policies['etcd.instance.single'](M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
+		end
+	end;
 }
 
 local function cast_types(c)
@@ -357,34 +367,102 @@ local function cast_types(c)
 	end
 end
 
+local function gen_instance_uuid(instance_name)
+	local k,d1,d2 = instance_name:match("^([A-Za-z_]+)_(%d+)_(%d+)$")
+	if k then
+		return string.format(
+			"%08s-%04d-%04d-%04d-%012x",
+			digest.sha1_hex(k .. "_instance"):sub(1,8),
+			d1,d2,0,0
+		)
+	end
+
+	k,d1 = instance_name:match("^([A-Za-z_]+)_(%d+)$")
+	if k then
+		return string.format(
+			"%08s-%04d-%04d-%04d-%012d",
+			digest.sha1_hex(k):sub(1,8),
+			0,0,0,d1
+		)
+	end
+	error("Can't generate uuid for instance "..instance_name, 2)
+end
+
+local function gen_cluster_uuid(cluster_name)
+	local k,d1 = cluster_name:match("^([A-Za-z_]+)_(%d+)$")
+	if k then
+		return string.format(
+			"%08s-%04d-%04d-%04d-%012d",
+			digest.sha1_hex(k .. "_shard"):sub(1,8),
+			d1,0,0,0
+		)
+	end
+	error("Can't generate uuid for instance "..instance_name, 2)
+end
+
 local function etcd_load( M, etcd_conf, local_cfg )
 
-	local etcd = require 'config.etcd' (etcd_conf)
+	local etcd
+	local instance_name = assert(etcd_conf.instance_name,"etcd.instance_name is required")
+	local prefix = assert(etcd_conf.prefix,"etcd.prefix is required")
+
+	if etcd_conf.fixed then
+		etcd = setmetatable({ data = etcd_conf.fixed },{__index = {
+			discovery = function() end;
+			list = function(e,k)
+				if k:sub(1,#prefix) == prefix then
+					k = k:sub(#prefix + 1)
+				end
+				local v = e.data
+				for key in k:gmatch("([^/]+)") do
+					if type(v) ~= "table" then return end
+					v = v[key]
+				end
+				return v
+			end;
+		}})
+	else
+		etcd = require 'config.etcd' (etcd_conf)
+	end
 	M.etcd = etcd
 
 	etcd:discovery()
 
-	local instance_name = assert(etcd_conf.instance_name,"etcd.instance_name is required")
-	local prefix = assert(etcd_conf.prefix,"etcd.prefix is required")
 
 	local common_cfg = etcd:list(prefix .. "/common")
 	assert(common_cfg.box,"no box config in etcd common tree")
 	cast_types(common_cfg.box)
-
+	
 	local all_instances_cfg = etcd:list(prefix .. "/instances")
-	for _,inst_cfg in pairs(all_instances_cfg) do
+	for instance_name,inst_cfg in pairs(all_instances_cfg) do
 		cast_types(inst_cfg.box)
+		if etcd_conf.uuid == 'auto' and not inst_cfg.box.instance_uuid then
+			inst_cfg.box.instance_uuid = gen_instance_uuid(instance_name)
+		end
 	end
+
 	local instance_cfg = all_instances_cfg[instance_name]
 	assert(instance_cfg,"Instance name "..instance_name.." is not known to etcd")
+
+
+	local all_clusters_cfg = etcd:list(prefix .. "/clusters") or etcd:list(prefix .. "/shards")
+	for cluster_name,cluster_cfg in pairs(all_clusters_cfg) do
+		cast_types(cluster_cfg)
+		if etcd_conf.uuid == 'auto' and not cluster_cfg.replicaset_uuid then
+			cluster_cfg.replicaset_uuid = gen_cluster_uuid(cluster_name)
+		end
+	end
+
 
 	local master_selection_policy
 	local cluster_cfg
 	if instance_cfg.cluster or local_cfg.cluster then
-		cluster_cfg = etcd:list(prefix.."/clusters/"..(instance_cfg.cluster or local_cfg.cluster))
+		cluster_cfg = all_clusters_cfg[ (instance_cfg.cluster or local_cfg.cluster) ]
 		assert(cluster_cfg,"Cluster section required");
 		assert(cluster_cfg.replicaset_uuid,"Need cluster uuid")
 		master_selection_policy = M.master_selection_policy or 'etcd.instance.read_only'
+	elseif instance_cfg.router then
+
 	else
 		master_selection_policy = M.master_selection_policy or 'etcd.instance.single'
 	end
@@ -395,29 +473,6 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	end
 	
 	local cfg = master_policy(M, instance_name, common_cfg, instance_cfg, cluster_cfg, local_cfg)
-
-
-	-- local cfg = etcd:list(prefix .. "/common")
-	-- assert(cfg.box,"no box config in etcd common tree")
-
-	-- -- print(yaml.encode(cfg))
-
-	-- local inst_cfg = etcd:list(prefix .. "/instances")
-	-- local my_cfg = inst_cfg[instance_name]
-	-- assert(my_cfg,"Instance name "..instance_name.." is not known to etcd")
-
-	-- deep_merge(cfg, my_cfg)
-
-
-	-- for k,v in pairs(cfg.box) do
-	-- 	if peek.template_cfg[k] == 'boolean' and type(v) == 'string' then
-	-- 		cfg.box[k] = cfg.box[k] == 'true'
-	-- 	end
-	-- end
-	-- if M.default_read_only and cfg.box.read_only == nil then
-	-- 	log.info("Instance have no read_only option, set read_only=true")
-	-- 	cfg.box.read_only = true
-	-- end
 
 	local members = {}
 	for k,v in pairs(all_instances_cfg) do
@@ -430,17 +485,6 @@ local function etcd_load( M, etcd_conf, local_cfg )
 		end
 	end
 
-	-- if my_cfg.cluster then
-	-- 	local cls_cfg = etcd:list(prefix.."/clusters/"..my_cfg.cluster)
-	-- 	assert(cls_cfg.replicaset_uuid,"Need cluster uuid")
-	-- 	cfg.box.replicaset_uuid = cls_cfg.replicaset_uuid
-	-- end
-
-
-	-- now, put local cfg over calculated
-	-- deep_merge(cfg,local_cfg)
-
-	-- print("members: ",yaml.encode(members))
 	if cfg.cluster then
 		--if cfg.box.read_only then
 			local repl = {}
@@ -640,11 +684,20 @@ local M
 			if cfg.box.remote_addr then
 				cfg.box.remote_addr = nil
 			end
+
+			if args.on_before_cfg then
+				args.on_before_cfg(M,cfg)
+			end
 			
-			print(string.format("Starting app: %s", yaml.encode(cfg.box)))
+			-- print(string.format("Starting app: %s", yaml.encode(cfg.box)))
+			local boxcfg = box.cfg
+
 			if args.boxcfg then
 				args.boxcfg( cfg.box )
 			else
+				if args.wrap_box_cfg then
+					boxcfg = args.wrap_box_cfg
+				end
 				if type(box.cfg) == 'function' then
 					if M.etcd then
 						if args.tidy_load then
@@ -675,7 +728,7 @@ local M
 							end
 						end
 						
-						box.cfg( cfg.box )
+						boxcfg( cfg.box )
 
 						log.info("Reloading config after start")
 
@@ -697,14 +750,14 @@ local M
 
 						if diff_box then
 							log.info("Reconfigure after load with %s",require'json'.encode(diff_box))
-							box.cfg(diff_box)
+							boxcfg(diff_box)
 						else
 							log.info("Config is actual after load")
 						end
 
 						M._flat = flatten(new_cfg)
 					else
-						box.cfg( cfg.box )
+						boxcfg( cfg.box )
 					end
 				else
 					local replication     = cfg.box.replication_source or cfg.box.replication
@@ -716,14 +769,18 @@ local M
 						cfg.box.replication        = nil
 						cfg.box.replication_source = nil
 
-						box.cfg( cfg.box )
+						boxcfg( cfg.box )
 
 						cfg.box.replication        = r
 						cfg.box.replication_source = rs
 					else
-						box.cfg( cfg.box )
+						boxcfg( cfg.box )
 					end
 				end
+			end
+
+			if args.on_after_cfg then
+				args.on_after_cfg(M,cfg)
 			end
 			-- print(string.format("Box configured"))
 
