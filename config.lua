@@ -426,32 +426,68 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	end
 	M.etcd = etcd
 
+	function M.etcd.get_common(e)
+		local common_cfg = e:list(prefix .. "/common")
+		assert(common_cfg.box,"no box config in etcd common tree")
+		cast_types(common_cfg.box)
+		return common_cfg
+	end
+
+	function M.etcd.get_instances(e)
+		local all_instances_cfg = etcd:list(prefix .. "/instances")
+		for instance_name,inst_cfg in pairs(all_instances_cfg) do
+			cast_types(inst_cfg.box)
+			if etcd_conf.uuid == 'auto' and not inst_cfg.box.instance_uuid then
+				inst_cfg.box.instance_uuid = gen_instance_uuid(instance_name)
+			end
+		end
+		return all_instances_cfg
+	end
+
+	function M.etcd.get_clusters(e)
+		local all_clusters_cfg = etcd:list(prefix .. "/clusters") or etcd:list(prefix .. "/shards")
+		for cluster_name,cluster_cfg in pairs(all_clusters_cfg) do
+			cast_types(cluster_cfg)
+			if etcd_conf.uuid == 'auto' and not cluster_cfg.replicaset_uuid then
+				cluster_cfg.replicaset_uuid = gen_cluster_uuid(cluster_name)
+			end
+		end
+		return all_clusters_cfg
+	end
+
+	function M.etcd.get_all(e)
+		local all_cfg = etcd:list(prefix)
+		cast_types(all_cfg.common.box)
+		for instance_name,inst_cfg in pairs(all_cfg.instances) do
+			cast_types(inst_cfg.box)
+			if etcd_conf.uuid == 'auto' and not inst_cfg.box.instance_uuid then
+				inst_cfg.box.instance_uuid = gen_instance_uuid(instance_name)
+			end
+		end
+		for cluster_name,cluster_cfg in pairs(all_cfg.clusters or all_cfg.shards) do
+			cast_types(cluster_cfg)
+			if etcd_conf.uuid == 'auto' and not cluster_cfg.replicaset_uuid then
+				cluster_cfg.replicaset_uuid = gen_cluster_uuid(cluster_name)
+			end
+		end
+		return all_cfg
+	end
+
 	etcd:discovery()
 
-
-	local common_cfg = etcd:list(prefix .. "/common")
-	assert(common_cfg.box,"no box config in etcd common tree")
-	cast_types(common_cfg.box)
-	
-	local all_instances_cfg = etcd:list(prefix .. "/instances")
-	for instance_name,inst_cfg in pairs(all_instances_cfg) do
-		cast_types(inst_cfg.box)
-		if etcd_conf.uuid == 'auto' and not inst_cfg.box.instance_uuid then
-			inst_cfg.box.instance_uuid = gen_instance_uuid(instance_name)
-		end
-	end
+	local all_cfg = etcd:get_all()
+	local common_cfg = all_cfg.common
+	-- local common_cfg = etcd:get_common()
+	local all_instances_cfg = all_cfg.instances
+	-- local all_instances_cfg = etcd:get_instances()
 
 	local instance_cfg = all_instances_cfg[instance_name]
 	assert(instance_cfg,"Instance name "..instance_name.." is not known to etcd")
 
+	-- local all_clusters_cfg = etcd:get_clusters()
+	local all_clusters_cfg = all_cfg.clusters or all_cfg.shards
 
-	local all_clusters_cfg = etcd:list(prefix .. "/clusters") or etcd:list(prefix .. "/shards")
-	for cluster_name,cluster_cfg in pairs(all_clusters_cfg) do
-		cast_types(cluster_cfg)
-		if etcd_conf.uuid == 'auto' and not cluster_cfg.replicaset_uuid then
-			cluster_cfg.replicaset_uuid = gen_cluster_uuid(cluster_name)
-		end
-	end
+	-- print(yaml.encode(all_clusters_cfg))
 
 
 	local master_selection_policy
@@ -659,6 +695,10 @@ local M
 			local cfg = load_config()
 
 			M._flat = flatten(cfg)
+			
+			if args.on_before_cfg then
+				args.on_before_cfg(M,cfg)
+			end
 
 			if args.mkdir then
 				local fio = require 'fio'
@@ -686,9 +726,6 @@ local M
 				cfg.box.remote_addr = nil
 			end
 
-			if args.on_before_cfg then
-				args.on_before_cfg(M,cfg)
-			end
 			
 			-- print(string.format("Starting app: %s", yaml.encode(cfg.box)))
 			local boxcfg
@@ -729,7 +766,9 @@ local M
 							end
 						end
 						
-						(boxcfg or box.cfg)( cfg.box )
+						log.info("Just before box.cfg %s", yaml.encode( cfg.box ))
+
+						;(boxcfg or box.cfg)( cfg.box )
 
 						log.info("Reloading config after start")
 
