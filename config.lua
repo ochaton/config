@@ -464,7 +464,7 @@ local function etcd_load( M, etcd_conf, local_cfg )
 				inst_cfg.box.instance_uuid = gen_instance_uuid(instance_name)
 			end
 		end
-		for cluster_name,cluster_cfg in pairs(all_cfg.clusters or all_cfg.shards) do
+		for cluster_name,cluster_cfg in pairs(all_cfg.clusters or all_cfg.shards or {}) do
 			cast_types(cluster_cfg)
 			if etcd_conf.uuid == 'auto' and not cluster_cfg.replicaset_uuid then
 				cluster_cfg.replicaset_uuid = gen_cluster_uuid(cluster_name)
