@@ -1,6 +1,7 @@
 local fiber = require 'fiber'
 local yaml = require 'yaml'
 local json = require 'json'
+local log = require 'log'
 
 local http_client = require 'http.client'
 local urilib = require('uri')
@@ -43,6 +44,8 @@ function M.new(M,options)
 	self.timeout   = options.timeout or 1
 	self.client    = http_client -- .new() - it fix for 1.6 also client: -> clent.
 	self.boolean_auto = options.boolean_auto
+	self.print_config = options.print_config
+	self.discover_endpoints = options.discover_endpoints == nil and true or options.discover_endpoints
 	if options.login then
 		self.authorization = "Basic "..digest.base64_encode(options.login..":"..(options.password or ""))
 		self.headers = { authorization = self.authorization }
@@ -53,6 +56,7 @@ end
 function M:discovery()
 	local timeout = self.timeout or 1
 	local new_endpoints = {}
+	local tried = {}
 	for _,e in pairs(self.endpoints) do
 		local uri = e .. "/v2/members"
 		local x = self.client.request("GET",uri,'',{timeout = timeout; headers = self.headers})
@@ -72,15 +76,25 @@ function M:discovery()
 				if #new_endpoints > 0 then
 					break
 				end
+			else
+				table.insert(tried, e..": bad reply")
 			end
+		elseif x and x.status == 404 then
+			table.insert(tried, e..": no /v2/members: possible run without --enable-v2?")
+		else
+			table.insert(tried, e..": "..(x and x.status))
 		end
 	end
 	if #new_endpoints == 0 then
-		error("Failed to discover members",2)
+		error("Failed to discover members "..table.concat(tried,", "),2)
 	end
-	print("etcd endpoints "..table.concat(new_endpoints,", "))
-	self.endpoints = new_endpoints
-	table.insert(self.endpoints,table.remove(self.endpoints,1))
+	if self.discover_endpoints then
+		self.endpoints = new_endpoints
+		table.insert(self.endpoints,table.remove(self.endpoints,1))
+		log.info("discovered etcd endpoints "..table.concat(self.endpoints,", "))
+	else
+		log.info("hardcoded etcd endpoints "..table.concat(self.endpoints,", "))
+	end
 	self.current = math.random(#self.endpoints)
 end
 

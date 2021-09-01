@@ -476,6 +476,9 @@ local function etcd_load( M, etcd_conf, local_cfg )
 	etcd:discovery()
 
 	local all_cfg = etcd:get_all()
+	if etcd_conf.print_config then
+		print("Loaded config from etcd",yaml.encode(all_cfg))
+	end
 	local common_cfg = all_cfg.common
 	-- local common_cfg = etcd:get_common()
 	local all_instances_cfg = all_cfg.instances
