@@ -1,4 +1,5 @@
 local log = require 'log'
+local fio = require 'fio'
 local con = require 'console'
 local fiber = require 'fiber'
 local json = require 'json'
@@ -649,13 +650,57 @@ local M
 
 			local function load_config()
 
+				local methods = {}
+				function methods.merge(dst, src, keep)
+					if src ~= nil then
+						deep_merge( dst, src, keep )
+					end
+					return dst
+				end
+
+				function methods.include(path, opts)
+					path = fio.pathjoin(fio.dirname(file), path)
+					opts = opts or { if_exists = false }
+					if not fio.path.exists(path) then
+						if opts.if_exists then
+							return
+						end
+						error("Not found include file `"..path.."'", 2)
+					end
+					local f,e = loadfile(path)
+					if not f then error(e,2) end
+					setfenv(f, getfenv(2))
+					local ret = f()
+					if ret ~= nil then
+						print("Return value from "..path.." is ignored")
+					end
+					return
+				end
+
+				function methods.print(...)
+					local p = {...}
+					for i = 1, select('#', ...) do
+						if type(p[i]) == 'table'
+							and not debug.getmetatable(p[i])
+						then
+							p[i] = json.encode(p[i])
+						end
+					end
+					print(unpack(p))
+				end
+
 				local f,e = loadfile(file)
 				if not f then error(e,2) end
-				-- local cfg = setmetatable({},{__index = _G })
-				local cfg = setmetatable({},{ __index = setmetatable(args,{ __index = _G }) })
-				-- local cfg = setmetatable({},{__index = { print = _G.print, loadstring = _G.loadstring }})
-				setfenv(f,cfg)
-				f()
+				local cfg = setmetatable({}, {
+					__index = setmetatable(methods, {
+						__index = setmetatable(args,{ __index = _G })
+					})
+				})
+				setfenv(f, cfg)
+				local ret = f()
+				if ret ~= nil then
+					print("Return value from "..file.." is ignored")
+				end
 				setmetatable(cfg,nil)
 				setmetatable(args,nil)
 				deep_merge(cfg,args.default or {},'keep')
