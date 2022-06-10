@@ -28,8 +28,6 @@ function M.errstr(code)
 	return M.err[ tonumber(code) ] or string.format("Unknown error %s",code)
 end
 
-setmetatable(M,{ __call = M.new })
-
 function M.new(mod,options)
 	local self = setmetatable({},{__index=mod})
 	self.endpoints = options.endpoints or {'http://127.0.0.1:4001','http://127.0.0.1:2379'}
@@ -45,6 +43,8 @@ function M.new(mod,options)
 	end
 	return self
 end
+
+setmetatable(M,{ __call = M.new })
 
 function M:discovery()
 	local timeout = self.timeout or 1
