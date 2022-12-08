@@ -3,6 +3,7 @@ local fio = require 'fio'
 local json = require 'json'
 local yaml = require 'yaml'
 local digest = require 'digest'
+local fiber  = require 'fiber'
 json.cfg{ encode_invalid_as_nil = true }
 
 local function lookaround(fun)
@@ -921,6 +922,107 @@ local M
 				args.on_after_cfg(M,cfg)
 			end
 			-- print(string.format("Box configured"))
+
+			log.info(cfg)
+			local msp = config.get('sys.master_selection_policy')
+			if type(cfg.etcd) == 'table'
+				and config.get('etcd.fencing_enabled')
+				and msp == 'etcd.cluster.master'
+				and type(cfg.cluster) == 'string' and cfg.cluster ~= ''
+			then
+				M._fencing_f = fiber.create(function()
+					fiber.name('config/fencing')
+					fiber.yield() -- yield execution
+					local function in_my_gen() return config._fencing_f == fiber.self() end
+
+					local watch_path = fio.pathjoin(
+						config.get('etcd.prefix'),
+						'clusters',
+						cfg.cluster,
+						'master'
+					)
+
+					local my_name = assert(config.get('sys.instance_name'), "instance_name is not defined")
+					local fencing_timeout = config.get('etcd.fencing_timeout', 10)
+
+					local etcd_master_name, watch_index
+
+					local function refresh_list()
+						local result, resp = config.etcd:list(watch_path)
+						if resp.status == 200 then
+							etcd_master_name = result
+							watch_index = resp.headers['x-etcd-index']
+						end
+						return etcd_master_name, watch_index
+					end
+
+					local function wait_etcd_master(deadline)
+						deadline = tonumber(deadline) or fiber.time()+fencing_timeout
+						if deadline < fiber.time() then
+							return false, "deadline limit is reached"
+						end
+						local timeout = math.min(deadline-fiber.time(), fencing_timeout)
+						local pcall_ok, new_master_or_err = pcall(function()
+							local ok, response = config.etcd:wait(watch_path, {
+								index = watch_index,
+								timeout = timeout,
+							})
+
+							if not ok then error(response) end -- also timed out
+							local res = json.decode(response.body)
+							if res.node then
+								return config.etcd:recursive_extract(watch_path, res.node)
+							end
+						end)
+
+						if pcall_ok then
+							return new_master_or_err
+						end
+
+						deadline = deadline+fencing_timeout
+						while fiber.time() < deadline and in_my_gen() do
+							local ok, e_master_name, e_index = pcall(refresh_list)
+							if ok then
+								return e_master_name
+							end
+							fiber.sleep(math.random(0.5, 1.5))
+						end
+
+						return false, "deadline limit is reached"
+					end
+
+					if not pcall(refresh_list) then
+						log.warn("etcd list failed")
+					end
+					log.info("etcd_master is %s (index: %s)", etcd_master_name, watch_index)
+
+					while in_my_gen() do
+						while box.info.ro and in_my_gen() do
+							pcall(box.ctl.wait_rw, 3)
+							fiber.testcancel()
+						end
+
+						if not in_my_gen() then return end
+						local deadline = fiber.time()+fencing_timeout
+
+						local new_master = wait_etcd_master(deadline)
+						if not in_my_gen() then return end
+
+						if not new_master then
+							log.warn('[fencing] ETCD is not discovered during %s seconds. Stepping down master',
+								fencing_timeout)
+							box.cfg{read_only=true}
+						elseif type(new_master) == 'string' and (new_master ~= my_name) then
+							log.warn('[fencing] ETCD has another master %s not us (%s). Stepping down master',
+								new_master, my_name
+							)
+							box.cfg{read_only=true}
+						else
+							log.verbose("we are still master in ETCD %s (%s)", new_master, my_name)
+						end
+					end
+				end)
+			end
 
 			return M
 		end
