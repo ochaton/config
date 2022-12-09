@@ -14,5 +14,10 @@ instance:
       cluster: instance
       box:
         instance_uuid: 91157a11-0000-0001-0000-000000000000
-        listen: instance_001:3301
+        listen: instance_01:3301
+    instance_02:
+      cluster: instance
+      box:
+        instance_uuid: 91157a11-0000-0002-0000-000000000000
+        listen: instance_02:3302
 ...

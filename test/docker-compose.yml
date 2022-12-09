@@ -15,6 +15,18 @@ x-etcd: &etcd
     ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
     ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
 
+x-tt: &tt
+  image: tarantool/tarantool:2.10
+  volumes:
+    - $PWD/../:/opt/tarantool/.rocks/share/tarantool:ro
+    - $PWD/app:/opt/tarantool
+  depends_on:
+    etcd:
+      condition: service_started
+  networks:
+    - tarantool
+  command: ["/bin/sh", "-c", "sleep 5 && tarantool /opt/tarantool/init.lua"]
+
 networks:
   tarantool:
     name: tt_net
@@ -34,15 +46,13 @@ services:
         condition: service_started
     entrypoint: ['']
     command: ["/bin/sh", "-c", "sleep 3 && switchover -v -e http://etcd:2379 etcd load / /instance.etcd.yaml"]
-  instance_001:
-    image: tarantool/tarantool:2.10
-    container_name: instance_001
-    volumes:
-      - $PWD/../:/opt/tarantool/.rocks/share/tarantool:ro
-      - $PWD/app:/opt/tarantool
-    depends_on:
-      etcd:
-        condition: service_started
-    networks:
-      - tarantool
-    command: ["/bin/sh", "-c", "sleep 8 && tarantool /opt/tarantool/init.lua"]
+  instance_01:
+    <<: *tt
+    container_name: instance_01
+    environment:
+      TT_INSTANCE_NAME: instance_01
+  instance_02:
+    <<: *tt
+    container_name: instance_02
+    environment:
+      TT_INSTANCE_NAME: instance_02
