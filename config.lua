@@ -944,6 +944,12 @@ local M
 					local my_name = assert(config.get('sys.instance_name'), "instance_name is not defined")
 					local fencing_timeout = config.get('etcd.fencing_timeout', 10)
 					local fencing_pause = config.get('etcd.fencing_pause', fencing_timeout/2)
+					local fencing_check_replication = config.get('etcd.fencing_check_replication')
+					if type(fencing_check_replication) == 'string' then
+						fencing_check_replication = fencing_check_replication == 'true'
+					else
+						fencing_check_replication = fencing_check_replication == true
+					end
 
 					local etcd_cluster, watch_index
 
@@ -964,14 +970,14 @@ local M
 					local function fencing_check(deadline)
 						local timeout = math.min(deadline-fiber.time(), fencing_timeout)
 						local check_started = fiber.time()
-						local pcall_ok, new_cluster = pcall(function()
+						local pcall_ok, err_or_resolution, new_cluster = pcall(function()
 							local not_timed_out, response = config.etcd:wait(watch_path, {
 								index = watch_index,
 								timeout = timeout,
 							})
 
 							-- http timed out / our network drop - we'll never know
-							if not not_timed_out then error(response) end
+							if not not_timed_out then return 'timeout' end
 							local res = json.decode(response.body)
 
 							if type(response.headers) == 'table'
@@ -982,24 +988,27 @@ local M
 							end
 
 							if res.node then
-								return config.etcd:recursive_extract(watch_path, res.node)
+								return 'changed', config.etcd:recursive_extract(watch_path, res.node)
 							end
 						end)
 
 						if not pcall_ok then
-							log.warn("ETCD watch failed: %s", new_cluster)
+							log.warn("ETCD watch failed: %s", err_or_resolution)
+						end
+
+						if err_or_resolution ~= 'changed' then
 							new_cluster = nil
 						end
 
-						-- return new_cluster
-						if not pcall_ok or not new_cluster then
+						if not new_cluster then
 							deadline = deadline+fencing_timeout
 							while fiber.time() < deadline and in_my_gen() do
 								local ok, e_cluster = pcall(refresh_list)
-								if ok then
+								if ok and e_cluster then
 									new_cluster = e_cluster
 									break
 								end
+								if not in_my_gen() then return end
 								fiber.sleep(fencing_pause / 10)
 							end
 						end
@@ -1009,6 +1018,10 @@ local M
 						if type(new_cluster) ~= 'table' then -- ETCD is down
 							log.warn('[fencing] ETCD %s is not discovered in etcd during %s seconds',
 								watch_path, fiber.time()-check_started)
+
+							if not fencing_check_replication then
+								return false
+							end
 
 							-- In proper fencing we must step down immediately as soon as we discover
 							-- that coordinator is down. But in real world there are some circumstances
