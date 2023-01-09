@@ -16,13 +16,15 @@ x-etcd: &etcd
     ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
 
 x-tt: &tt
-  image: tarantool/tarantool:2.10
+  build: .
   volumes:
     - $PWD/../:/opt/tarantool/.rocks/share/tarantool:ro
     - $PWD/app:/opt/tarantool
+    - $PWD/net:/opt/tarantool/net:ro
   depends_on:
     etcd:
       condition: service_started
+  privileged: true
   networks:
     - tarantool
   command: ["/bin/sh", "-c", "sleep 5 && tarantool /opt/tarantool/init.lua"]
@@ -36,7 +38,7 @@ services:
   etcd:
     <<: *etcd
   etcd_load:
-    image: registry.gitlab.com/ochaton/switchover:latest
+    image: registry.gitlab.com/ochaton/switchover:010a6965
     networks:
       - tarantool
     volumes:
