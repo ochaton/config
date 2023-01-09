@@ -1,11 +1,10 @@
 name: Create and push rockspec for moonlibs/config
 
 on:
-  workflow_run:
-    branches:
-      - master
-      - ci
   push:
+    branches:
+      - "master"
+      - "ci"
     tags:
       - '*'
 
